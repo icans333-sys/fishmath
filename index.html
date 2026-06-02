@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>유리수 수학 물고기 서바이벌</title>
+    <style>
+body, html {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background-color: #0077be;
+    font-family: 'Malgun Gothic', sans-serif;
+    touch-action: none; user-select: none; transition: background-color 2s;
+}
+canvas { display: block; }
+
+#ui-layer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none;
+}
+.hud {
+    padding: 15px; color: white; font-size: 20px; font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.6); display: none;
+}
+#stageTxt { font-size: 26px; color: #aaffaa; }
+
+.modal {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.95); padding: 30px; border-radius: 15px;
+    text-align: center; pointer-events: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    max-width: 90%; max-height: 90%; overflow-y: auto;
+}
+button {
+    margin: 10px; padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer;
+    border: none; border-radius: 8px; background-color: #0077be; color: white;
+    transition: background 0.2s;
+}
+button:hover { background-color: #005a90; }
+.danger-text { color: #ff4444; font-weight: bold; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0.5; } }
+
+.mistake-log {
+    text-align: left; background: #fff3f3; padding: 10px;
+    border-left: 4px solid #ff4444; margin-top: 10px; font-size: 14px; color: #333;
+}
+
+#joystick-zone {
+    position: absolute; bottom: 40px; left: 40px; width: 120px; height: 120px;
+    background: rgba(255, 255, 255, 0.2); border: 2px solid rgba(255, 255, 255, 0.5);
+    border-radius: 50%; display: none; pointer-events: auto;
+}
+#joystick-knob {
+    position: absolute; top: 30px; left: 30px; width: 60px; height: 60px;
+    background: rgba(255, 255, 255, 0.7); border-radius: 50%; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+}
+
+.tip-text {
+    background: #fff3cd; color: #856404; padding: 10px; border-radius: 5px;
+    font-size: 14px; text-align: left; margin: 15px 0; border-left: 5px solid #ffeeba;
+}
+
+</style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div id="hud" class="hud">
+            <div id="stageTxt">STAGE 1: 정수의 덧셈/뺄셈</div>
+            <div>내 숫자: <span id="myNumTxt" style="color:#ffea00; font-size:28px;">0</span></div>
+            <div>점수: <span id="scoreTxt">0</span></div>
+            <div>남은 시간: <span id="timeTxt">180</span>초 (3분 생존)</div>
+            <div>상태: <span id="comboTxt">0/5</span> <span id="goldenTxt" style="color:gold; display:none;">(황금 모드!)</span></div>
+        </div>
+
+        <div id="joystick-zone"><div id="joystick-knob"></div></div>
+
+        <div id="menu-screen" class="modal">
+            <h2>🐟 유리수 물고기 서바이벌</h2>
+            <p>나보다 <b>작은 결과값</b>의 물고기를 잡아먹으세요!<br>먹은 물고기의 수식 결과가 <b>내 숫자</b>가 됩니다.</p>
+
+            <div class="tip-text">
+                <b>💡 생존 전략:</b><br>
+                계속 잡아먹으면 내 숫자가 점점 작아져서 먹을 게 없어집니다!<br>
+                위험할 땐 <b>물방울 아이템(부호 반전 등)</b>을 먹거나,<br>
+                5콤보 <b>황금 모드</b>일 때 가장 큰 물고기를 먹어 탈출하세요!
+            </div>
+
+            <p style="font-size:14px; color:#555;">조작: PC(WASD / 방향키), 모바일(좌측 하단 터치 조이스틱)</p>
+            <button data-difficulty="1">하 (연산 1번)</button>
+            <button data-difficulty="2">중 (연산 2번)</button>
+            <button data-difficulty="3">상 (연산 3번)</button>
+        </div>
+
+        <div id="result-screen" class="modal" style="display: none;">
+            <h2 id="resultTitle">게임 종료</h2>
+            <p>최종 점수: <b id="finalScore" style="font-size: 24px; color: #0077be;">0</b></p>
+            <div id="mistakeContainer">
+                <h3 style="margin-bottom: 5px;">📝 나의 오답 노트</h3>
+                <div id="mistakeList"></div>
+            </div>
+            <button id="backToMenuBtn">메인으로</button>
+        </div>
+    </div>
+
+    <!-- 모든 JS를 인라인으로 통합 (의존성 순서 유지) -->
+    <script>
+/* ===== config.js ===== */
+// 전역 네임스페이스 생성 (한 번만)
+window.Game = window.Game || {};
+
+Game.Config = {
+    TOTAL_TIME: 180,
+    PENALTY_TIME: 3,
+    GOLDEN_DURATION: 10,
+    COMBO_THRESHOLD: 5,
+    MAX_MISTAKE_LOG: 5,
+
+    STAGES: [
+        { startTime: 0, name: "정수의 덧셈/뺄셈", allowFrac: false, ops: ['+', '-'], bgColor: '#0077be' },
+        { startTime: 45, name: "정수의 사칙연산", allowFrac: false, ops: ['+', '-', '×', '÷'], bgColor: '#006699' },
+        { startTime: 90, name: "유리수 덧셈/뺄셈", allowFrac: true, ops: ['+', '-'], bgColor: '#005577' },
+        { startTime: 135, name: "유리수 종합(지옥)", allowFrac: true, ops: ['+', '-', '×', '÷'], bgColor: '#004455' }
+    ],
+
+    PLAYER: {
+        radius: 35,
+        speed: 300,
+        color: '#00ffaa',
+        goldenColor: '#ffcc00'
+    },
+
+    ENTITY: {
+        fishBaseRadius: 45,
+        itemRadius: 25,
+        fishBaseSpeed: 80,
+        itemSpeed: 100,
+        edibleSpawnRate: 0.6,
+        itemSpawnRateNormal: 0.85,
+        itemSpawnRateDanger: 0.70,
+        dangerThreshold: -5
+    }
+};
+
+    </script>
+    <script>
+/* ===== fraction.js ===== */
+window.Game = window.Game || {};
+
+Game.Fraction = (function() {
+    function gcd(a, b) {
+        return b === 0 ? Math.abs(a) : gcd(b, a % b);
+    }
+
+    function frac(n, d = 1) {
+        if (d < 0) { n = -n; d = -d; }
+        const g = gcd(n, d);
+        return { n: n / g, d: d / g };
+    }
+
+    function fracAdd(a, b) { return frac(a.n * b.d + b.n * a.d, a.d * b.d); }
+    function fracSub(a, b) { return frac(a.n * b.d - b.n * a.d, a.d * b.d); }
+    function fracMul(a, b) { return frac(a.n * b.n, a.d * b.d); }
+    function fracDiv(a, b) { return frac(a.n * b.d, a.d * b.n); }
+    function fracVal(f) { return f.n / f.d; }
+    function fracStr(f) { return f.d === 1 ? `${f.n}` : `${f.n}/${f.d}`; }
+
+    function formatTerm(f) {
+        const str = fracStr(f);
+        return f.n < 0 ? `(${str})` : str;
+    }
+
+    return {
+        frac, fracAdd, fracSub, fracMul, fracDiv, fracVal, fracStr, formatTerm
+    };
+})();
+
+    </script>
+    <script>
+/* ===== mathGenerator.js ===== */
+window.Game = window.Game || {};
+
+Game.MathGenerator = (function() {
+    const { frac, fracAdd, fracSub, fracMul, fracDiv, fracVal, formatTerm } = Game.Fraction;
+    const { STAGES } = Game.Config;
+
+    function getRandomNumber(allowFractions) {
+        if (!allowFractions || Math.random() > 0.5) {
+            let n;
+            do { n = Math.floor(Math.random() * 19) - 9; } while (n === 0);
+            return frac(n, 1);
+        } else {
+            let n;
+            do { n = Math.floor(Math.random() * 9) - 4; } while (n === 0);
+            const d = [2, 3, 4][Math.floor(Math.random() * 3)];
+            return frac(n, d);
+        }
+    }
+
+    function generateMathExpression(opsCount, stageIndex) {
+        const stage = STAGES[stageIndex];
+        const allowedOps = stage.ops;
+        const allowFrac = stage.allowFrac;
+
+        const terms = [getRandomNumber(allowFrac)];
+        const ops = [];
+
+        for (let i = 0; i < opsCount; i++) {
+            ops.push(allowedOps[Math.floor(Math.random() * allowedOps.length)]);
+            terms.push(getRandomNumber(allowFrac));
+        }
+
+        let display = formatTerm(terms[0]);
+        for (let i = 0; i < ops.length; i++) {
+            display += ` ${ops[i]} ${formatTerm(terms[i + 1])}`;
+        }
+
+        const calcTerms = [...terms];
+        const calcOps = [...ops];
+
+        for (let i = 0; i < calcOps.length; i++) {
+            if (calcOps[i] === '×' || calcOps[i] === '÷') {
+                const res = calcOps[i] === '×'
+                    ? fracMul(calcTerms[i], calcTerms[i + 1])
+                    : fracDiv(calcTerms[i], calcTerms[i + 1]);
+                calcTerms.splice(i, 2, res);
+                calcOps.splice(i, 1);
+                i--;
+            }
+        }
+        for (let i = 0; i < calcOps.length; i++) {
+            if (calcOps[i] === '+' || calcOps[i] === '-') {
+                const res = calcOps[i] === '+'
+                    ? fracAdd(calcTerms[i], calcTerms[i + 1])
+                    : fracSub(calcTerms[i], calcTerms[i + 1]);
+                calcTerms.splice(i, 2, res);
+                calcOps.splice(i, 1);
+                i--;
+            }
+        }
+
+        return { display, valueObj: calcTerms[0], value: fracVal(calcTerms[0]) };
+    }
+
+    return { getRandomNumber, generateMathExpression };
+})();
+
+    </script>
+    <script>
+/* ===== renderer.js ===== */
+window.Game = window.Game || {};
+
+Game.Renderer = (function() {
+    function drawFish(ctx, x, y, radius, color, isFacingLeft, text) {
+        ctx.save();
+        ctx.translate(x, y);
+        if (isFacingLeft) ctx.scale(-1, 1);
+
+        ctx.beginPath();
+        ctx.moveTo(-radius * 0.7, 0);
+        ctx.lineTo(-radius * 1.6, -radius * 0.8);
+        ctx.lineTo(-radius * 1.6, radius * 0.8);
+        ctx.fillStyle = color; ctx.fill(); ctx.stroke();
+
+        ctx.beginPath();
+        ctx.ellipse(0, 0, radius, radius * 0.75, 0, 0, Math.PI * 2);
+        ctx.fillStyle = color; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(0, -radius * 0.75);
+        ctx.lineTo(-radius * 0.5, -radius * 1.2);
+        ctx.lineTo(-radius * 0.2, -radius * 0.75);
+        ctx.fillStyle = color; ctx.fill(); ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(radius * 0.5, -radius * 0.25, radius * 0.15, 0, Math.PI * 2);
+        ctx.fillStyle = 'white'; ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(radius * 0.55, -radius * 0.25, radius * 0.07, 0, Math.PI * 2);
+        ctx.fillStyle = 'black'; ctx.fill();
+
+        ctx.restore();
+
+        if (text) {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'black';
+            ctx.strokeText(text, x, y);
+            ctx.fillText(text, x, y);
+        }
+    }
+
+    function drawBubble(ctx, x, y, radius, text) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.stroke();
+
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 18px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x, y);
+    }
+
+    function drawFloatingText(ctx, ft) {
+        ctx.save();
+        ctx.globalAlpha = ft.life / 1.5;
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = ft.isSuccess ? '#55ff55' : '#ff5555';
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 4;
+        ctx.strokeText(ft.text, ft.x, ft.y);
+        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.restore();
+    }
+
+    return { drawFish, drawBubble, drawFloatingText };
+})();
+
+    </script>
+    <script>
+/* ===== player.js ===== */
+window.Game = window.Game || {};
+
+Game.Player = (function() {
+    const { PLAYER } = Game.Config;
+    const { frac } = Game.Fraction;
+
+    class Player {
+        constructor(canvas) {
+            this.canvas = canvas;
+            this.x = canvas.width / 4;
+            this.y = canvas.height / 2;
+            this.radius = PLAYER.radius;
+            this.speed = PLAYER.speed;
+            this.value = frac(0, 1);
+            this.facingLeft = false;
+
+            this.keys = { w: false, a: false, s: false, d: false };
+            this.joyVector = { x: 0, y: 0 };
+            this.joyActive = false;
+
+            this._setupKeyboard();
+            this._setupJoystick();
+        }
+
+        reset(canvas) {
+            this.x = canvas.width / 4;
+            this.y = canvas.height / 2;
+            this.value = frac(0, 1);
+        }
+
+        _setupKeyboard() {
+            window.addEventListener('keydown', e => {
+                const k = e.key.toLowerCase();
+                if (k === 'w' || e.key === 'ArrowUp') this.keys.w = true;
+                if (k === 's' || e.key === 'ArrowDown') this.keys.s = true;
+                if (k === 'a' || e.key === 'ArrowLeft') this.keys.a = true;
+                if (k === 'd' || e.key === 'ArrowRight') this.keys.d = true;
+            });
+            window.addEventListener('keyup', e => {
+                const k = e.key.toLowerCase();
+                if (k === 'w' || e.key === 'ArrowUp') this.keys.w = false;
+                if (k === 's' || e.key === 'ArrowDown') this.keys.s = false;
+                if (k === 'a' || e.key === 'ArrowLeft') this.keys.a = false;
+                if (k === 'd' || e.key === 'ArrowRight') this.keys.d = false;
+            });
+        }
+
+        _setupJoystick() {
+            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+            if (!isTouchDevice) return;
+
+            const joyZone = document.getElementById('joystick-zone');
+            const joyKnob = document.getElementById('joystick-knob');
+            joyZone.style.display = 'block';
+
+            const handleJoy = (e) => {
+                e.preventDefault();
+                this.joyActive = true;
+                const touch = e.targetTouches[0];
+                const rect = joyZone.getBoundingClientRect();
+                let dx = touch.clientX - (rect.left + rect.width / 2);
+                let dy = touch.clientY - (rect.top + rect.height / 2);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const maxDist = rect.width / 2 - 20;
+                if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+                joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+                this.joyVector = { x: dx / maxDist, y: dy / maxDist };
+            };
+
+            joyZone.addEventListener('touchstart', handleJoy, { passive: false });
+            joyZone.addEventListener('touchmove', handleJoy, { passive: false });
+            joyZone.addEventListener('touchend', () => {
+                this.joyActive = false;
+                this.joyVector = { x: 0, y: 0 };
+                joyKnob.style.transform = 'translate(0px, 0px)';
+            });
+        }
+
+        update(deltaTime) {
+            let dx = 0, dy = 0;
+            if (this.keys.w) dy -= 1;
+            if (this.keys.s) dy += 1;
+            if (this.keys.a) dx -= 1;
+            if (this.keys.d) dx += 1;
+
+            if (dx === 0 && dy === 0 && this.joyActive) {
+                dx = this.joyVector.x; dy = this.joyVector.y;
+            } else if (dx !== 0 || dy !== 0) {
+                const len = Math.sqrt(dx * dx + dy * dy);
+                dx /= len; dy /= len;
+            }
+
+            this.x += dx * this.speed * deltaTime;
+            this.y += dy * this.speed * deltaTime;
+            this.x = Math.max(this.radius, Math.min(this.canvas.width - this.radius, this.x));
+            this.y = Math.max(this.radius, Math.min(this.canvas.height - this.radius, this.y));
+            if (dx !== 0) this.facingLeft = dx < 0;
+        }
+    }
+
+    return Player;
+})();
+
+    </script>
+    <script>
+/* ===== entities.js ===== */
+window.Game = window.Game || {};
+
+Game.Entities = (function() {
+    const { frac, fracAdd, fracMul, fracVal, fracStr } = Game.Fraction;
+    const { generateMathExpression } = Game.MathGenerator;
+    const { ENTITY, PENALTY_TIME, COMBO_THRESHOLD, GOLDEN_DURATION, MAX_MISTAKE_LOG } = Game.Config;
+
+    function isInDanger(playerValue) {
+        return fracVal(playerValue) <= ENTITY.dangerThreshold;
+    }
+
+    function getSmartItem(playerValue) {
+        const pool = [];
+        if (isInDanger(playerValue)) {
+            pool.push({ text: 'x(-1)', type: 'mul', val: frac(-1, 1) });
+            pool.push({ text: 'x(-1)', type: 'mul', val: frac(-1, 1) });
+            pool.push({ text: '+10', type: 'add', val: frac(10, 1) });
+            pool.push({ text: '= 5', type: 'set', val: frac(5, 1) });
+        } else {
+            pool.push({ text: '+5', type: 'add', val: frac(5, 1) });
+            pool.push({ text: '-2', type: 'add', val: frac(-2, 1) });
+            pool.push({ text: 'x2', type: 'mul', val: frac(2, 1) });
+        }
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    function spawnEntity(entities, canvas, player, difficultyOps, stageIndex) {
+        const yPos = Math.random() * (canvas.height - 120) + 60;
+        const pVal = fracVal(player.value);
+        const itemSpawnRate = isInDanger(player.value) ? ENTITY.itemSpawnRateDanger : ENTITY.itemSpawnRateNormal;
+
+        if (Math.random() > itemSpawnRate) {
+            entities.push({
+                type: 'ITEM',
+                x: canvas.width + 50, y: yPos,
+                radius: ENTITY.itemRadius,
+                speed: Math.random() * 50 + ENTITY.itemSpeed,
+                data: getSmartItem(player.value)
+            });
+        } else {
+            let mathData;
+            let attempts = 0;
+            const shouldBeEdible = Math.random() < ENTITY.edibleSpawnRate;
+
+            do {
+                mathData = generateMathExpression(difficultyOps, stageIndex);
+                attempts++;
+                if (attempts > 20) break;
+            } while (shouldBeEdible ? mathData.value >= pVal : mathData.value < pVal);
+
+            entities.push({
+                type: 'FISH',
+                x: canvas.width + 50, y: yPos,
+                radius: ENTITY.fishBaseRadius + (difficultyOps * 5),
+                speed: Math.random() * 70 + ((stageIndex + 1) * 15 + ENTITY.fishBaseSpeed),
+                display: mathData.display,
+                valueObj: mathData.valueObj,
+                value: mathData.value
+            });
+        }
+    }
+
+    function _applyItem(player, ent) {
+        if (ent.data.type === 'add') player.value = fracAdd(player.value, ent.data.val);
+        if (ent.data.type === 'mul') player.value = fracMul(player.value, ent.data.val);
+        if (ent.data.type === 'set') player.value = ent.data.val;
+    }
+
+    function _processFishCollision(state, ent) {
+        const { player, floatingTexts, mistakeLog } = state;
+        const pStr = fracStr(player.value);
+        const fStr = fracStr(ent.valueObj);
+        const pVal = fracVal(player.value);
+
+        if (state.isGoldenMode || pVal > ent.value) {
+            if (state.isGoldenMode && pVal <= ent.value) {
+                floatingTexts.push({ x: player.x, y: player.y - 50, text: '⭐황금 보너스!⭐', life: 1.5, isSuccess: true });
+            } else {
+                floatingTexts.push({ x: player.x, y: player.y - 50, text: `${pStr} > ${fStr} ⭕`, life: 1.5, isSuccess: true });
+            }
+
+            player.value = ent.valueObj;
+            state.score += 10 * (state.stageIndex + 1);
+
+            if (!state.isGoldenMode) {
+                state.combo++;
+                if (state.combo >= COMBO_THRESHOLD) {
+                    state.isGoldenMode = true;
+                    state.goldenTimer = GOLDEN_DURATION;
+                }
+            }
+        } else {
+            const symbol = pVal === ent.value ? '=' : '<';
+            floatingTexts.push({
+                x: player.x, y: player.y - 50,
+                text: `${pStr} ${symbol} ${fStr} ❌`,
+                life: 1.5, isSuccess: false
+            });
+
+            if (mistakeLog.length < MAX_MISTAKE_LOG) {
+                mistakeLog.push(`❌ 내 숫자 <b>[${pStr}]</b> 였지만, <br>&nbsp;&nbsp;&nbsp;&nbsp;<b>[ ${ent.display} ]</b> (결과: ${fStr}) 을 먹으려다 실패!`);
+            }
+
+            state.time = Math.max(0, state.time - PENALTY_TIME);
+            state.combo = 0;
+            state.isGoldenMode = false;
+            state.screenShake = 15;
+        }
+    }
+
+    function checkCollisions(state) {
+        const { entities, player } = state;
+        for (let i = entities.length - 1; i >= 0; i--) {
+            const ent = entities[i];
+            const dx = player.x - ent.x;
+            const dy = player.y - ent.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < player.radius * 0.8 + ent.radius * 0.8) {
+                if (ent.type === 'ITEM') {
+                    _applyItem(player, ent);
+                } else {
+                    _processFishCollision(state, ent);
+                }
+                entities.splice(i, 1);
+            }
+        }
+    }
+
+    return { spawnEntity, checkCollisions };
+})();
+
+    </script>
+    <script>
+/* ===== main.js ===== */
+(function() {
+    const { TOTAL_TIME, STAGES, PLAYER } = Game.Config;
+    const { fracStr } = Game.Fraction;
+    const { getRandomNumber } = Game.MathGenerator;
+    const { drawFish, drawBubble, drawFloatingText } = Game.Renderer;
+    const Player = Game.Player;
+    const { spawnEntity, checkCollisions } = Game.Entities;
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const state = {
+        gameState: 'MENU',
+        difficultyOps: 1,
+        score: 0,
+        time: TOTAL_TIME,
+        combo: 0,
+        isGoldenMode: false,
+        goldenTimer: 0,
+        stageIndex: 0,
+        entities: [],
+        floatingTexts: [],
+        mistakeLog: [],
+        screenShake: 0,
+        player: new Player(canvas)
+    };
+
+    let lastTime = 0;
+    let spawnTimer = 0;
+
+    function updateHUD() {
+        const stage = STAGES[state.stageIndex];
+        document.body.style.backgroundColor = stage.bgColor;
+        document.getElementById('stageTxt').innerText = `STAGE ${state.stageIndex + 1}: ${stage.name}`;
+        document.getElementById('myNumTxt').innerText = fracStr(state.player.value);
+        document.getElementById('scoreTxt').innerText = state.score;
+
+        if (state.isGoldenMode) {
+            document.getElementById('comboTxt').innerText = `${Math.ceil(state.goldenTimer)}초`;
+            document.getElementById('goldenTxt').style.display = 'inline';
+        } else {
+            document.getElementById('comboTxt').innerText = `${state.combo}/5`;
+            document.getElementById('goldenTxt').style.display = 'none';
+        }
+
+        document.getElementById('timeTxt').innerText = Math.ceil(state.time);
+        document.getElementById('timeTxt').className = state.time <= 15 ? 'danger-text' : '';
+    }
+
+    function updateStageIndex() {
+        const elapsed = TOTAL_TIME - state.time;
+        for (let i = STAGES.length - 1; i >= 0; i--) {
+            if (elapsed >= STAGES[i].startTime) {
+                state.stageIndex = i;
+                break;
+            }
+        }
+    }
+
+    function updateFloatingTexts(deltaTime) {
+        for (let i = state.floatingTexts.length - 1; i >= 0; i--) {
+            const ft = state.floatingTexts[i];
+            ft.life -= deltaTime;
+            ft.y -= 30 * deltaTime;
+            if (ft.life <= 0) state.floatingTexts.splice(i, 1);
+        }
+    }
+
+    function endGame(isClear) {
+        state.gameState = 'GAMEOVER';
+        document.getElementById('hud').style.display = 'none';
+        document.getElementById('result-screen').style.display = 'block';
+
+        document.getElementById('resultTitle').innerText = isClear ? "🎉 3분 생존 성공! (Game Clear)" : "시간 초과! (Game Over)";
+        document.getElementById('finalScore').innerText = state.score;
+
+        const logHtml = state.mistakeLog.length > 0
+            ? state.mistakeLog.map(m => `<div class="mistake-log">${m}</div>`).join('')
+            : "<div style='color:green; padding:10px;'>완벽합니다! 틀린 문제가 없습니다.</div>";
+        document.getElementById('mistakeList').innerHTML = logHtml;
+    }
+
+    function gameLoop(timestamp) {
+        if (state.gameState !== 'PLAYING') return;
+
+        const deltaTime = Math.min((timestamp - lastTime) / 1000, 0.05);
+        lastTime = timestamp;
+
+        state.time -= deltaTime;
+        if (state.isGoldenMode) {
+            state.goldenTimer -= deltaTime;
+            if (state.goldenTimer <= 0) { state.isGoldenMode = false; state.combo = 0; }
+        }
+        if (state.time <= 0) { endGame(true); return; }
+
+        updateStageIndex();
+        state.player.update(deltaTime);
+
+        spawnTimer -= deltaTime;
+        if (spawnTimer <= 0) {
+            spawnEntity(state.entities, canvas, state.player, state.difficultyOps, state.stageIndex);
+            spawnTimer = Math.max(0.3, 0.8 - ((state.stageIndex + 1) * 0.1)) + Math.random() * 0.5;
+        }
+
+        for (let i = state.entities.length - 1; i >= 0; i--) {
+            state.entities[i].x -= state.entities[i].speed * deltaTime;
+            if (state.entities[i].x < -150) state.entities.splice(i, 1);
+        }
+
+        checkCollisions(state);
+        updateFloatingTexts(deltaTime);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (state.screenShake > 0) {
+            ctx.save();
+            ctx.translate((Math.random() - 0.5) * state.screenShake, (Math.random() - 0.5) * state.screenShake);
+            state.screenShake -= deltaTime * 30;
+            if (state.screenShake < 0) state.screenShake = 0;
+        }
+
+        state.entities.forEach(ent => {
+            if (ent.type === 'ITEM') drawBubble(ctx, ent.x, ent.y, ent.radius, ent.data.text);
+            else drawFish(ctx, ent.x, ent.y, ent.radius, '#ff5555', true, ent.display);
+        });
+
+        const pColor = state.isGoldenMode ? PLAYER.goldenColor : PLAYER.color;
+        if (state.isGoldenMode) { ctx.shadowColor = 'gold'; ctx.shadowBlur = 20; }
+        drawFish(ctx, state.player.x, state.player.y, state.player.radius, pColor, state.player.facingLeft, fracStr(state.player.value));
+        ctx.shadowBlur = 0;
+
+        if (state.screenShake > 0) ctx.restore();
+
+        state.floatingTexts.forEach(ft => drawFloatingText(ctx, ft));
+
+        updateHUD();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function startGame(difficulty) {
+        state.difficultyOps = difficulty;
+        state.score = 0;
+        state.time = TOTAL_TIME;
+        state.combo = 0;
+        state.stageIndex = 0;
+        state.isGoldenMode = false;
+        state.entities = [];
+        state.floatingTexts = [];
+        state.mistakeLog = [];
+        state.screenShake = 0;
+
+        state.player.reset(canvas);
+        state.player.value = getRandomNumber(false);
+
+        state.gameState = 'PLAYING';
+        document.getElementById('menu-screen').style.display = 'none';
+        document.getElementById('result-screen').style.display = 'none';
+        document.getElementById('hud').style.display = 'block';
+
+        lastTime = performance.now();
+        spawnTimer = 0;
+        requestAnimationFrame(gameLoop);
+    }
+
+    function showMenu() {
+        state.gameState = 'MENU';
+        document.getElementById('menu-screen').style.display = 'block';
+        document.getElementById('result-screen').style.display = 'none';
+        document.getElementById('hud').style.display = 'none';
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        document.body.style.backgroundColor = STAGES[0].bgColor;
+    }
+
+    document.querySelectorAll('#menu-screen button[data-difficulty]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            startGame(parseInt(btn.dataset.difficulty));
+        });
+    });
+    document.getElementById('backToMenuBtn').addEventListener('click', showMenu);
+})();
+
+    </script>
+</body>
+</html>
